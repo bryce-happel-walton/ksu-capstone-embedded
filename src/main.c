@@ -42,24 +42,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
 static esp_err_t ws_handler(httpd_req_t *req)
 {
-    if (req->method == HTTP_GET)
-        return ESP_OK; // handshake
-
-    httpd_ws_frame_t frame = {
-        .type = HTTPD_WS_TYPE_BINARY,
-        .payload = (uint8_t *)&(TestData){
-            .hello = "world from ESP",
-            .beep = 991,
-            .boop = false,
-        },
-        .len = sizeof(TestData),
-    };
-
-    return httpd_ws_send_frame(req, &frame);
+    return ESP_OK;
 }
 
 void send_task(void *pvParameters)
 {
+    static uint32_t inc_num = 0;
+    static bool inc_bool = false;
+
     while (true)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -72,10 +62,11 @@ void send_task(void *pvParameters)
             {
                 if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
                 {
+                    inc_bool = !inc_bool;
                     TestData test = {
-                        .hello = "world from ESP",
-                        .beep = 991,
-                        .boop = false,
+                        .hello = "World! from ESP",
+                        .beep = inc_num++,
+                        .boop = inc_bool,
                     };
                     httpd_ws_frame_t frame = {
                         .type = HTTPD_WS_TYPE_BINARY,
