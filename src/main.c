@@ -10,12 +10,15 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
+#include "shared_lib.h"
+
 #define WIFI_SSID "Speed Sign Test"
 #define WIFI_PASS "ksu_capstone_giga#oreo"
 #define WIFI_CHANNEL 1
 #define MAX_STA_CONN 4
 
 static const char *TAG = "wifi softAP";
+static httpd_handle_t server = NULL;
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
@@ -37,27 +40,73 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-static esp_err_t json_handler(httpd_req_t *req)
+static esp_err_t ws_handler(httpd_req_t *req)
 {
-    const char *json = "{\"hello\":\"world\"}";
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, json);
-    return ESP_OK;
+    if (req->method == HTTP_GET)
+        return ESP_OK; // handshake
+
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .payload = (uint8_t *)&(TestData){
+            .hello = "world from ESP",
+            .beep = 991,
+            .boop = false,
+        },
+        .len = sizeof(TestData),
+    };
+
+    return httpd_ws_send_frame(req, &frame);
+}
+
+void send_task(void *pvParameters)
+{
+    while (true)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        size_t clients = 10;
+        int fds[10];
+        if (httpd_get_client_list(server, &clients, fds) == ESP_OK)
+        {
+            for (int i = 0; i < clients; i++)
+            {
+                if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
+                {
+                    TestData test = {
+                        .hello = "world from ESP",
+                        .beep = 991,
+                        .boop = false,
+                    };
+                    httpd_ws_frame_t frame = {
+                        .type = HTTPD_WS_TYPE_BINARY,
+                        .payload = (uint8_t *)&test,
+                        .len = sizeof(TestData),
+                    };
+                    esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
+                    ESP_LOGI(TAG, "Sent WS frame to fd %d, result: %s", fds[i], esp_err_to_name(ret));
+                }
+            }
+        }
+    }
 }
 
 void start_webserver(void)
 {
-    httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.enable_so_linger = false;
 
-    httpd_uri_t json_uri = {
+    httpd_uri_t ws_uri = {
         .uri = "/data",
         .method = HTTP_GET,
-        .handler = json_handler,
+        .handler = ws_handler,
+        .is_websocket = true,
     };
 
     if (httpd_start(&server, &config) == ESP_OK)
-        httpd_register_uri_handler(server, &json_uri);
+    {
+        httpd_register_uri_handler(server, &ws_uri);
+        xTaskCreate(send_task, "send_task", 4096, NULL, 5, NULL);
+    }
 }
 
 void wifi_init_softap(void)
