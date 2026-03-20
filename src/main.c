@@ -14,7 +14,7 @@
 #include "driver/gpio.h"
 #include "shared_lib.h"
 
-#define FLASH_LED_PIN 4
+// #define FLASH_LED_PIN 4
 
 // ESP32-CAM pin definitions
 #define CAM_PIN_PWDN 32
@@ -37,7 +37,8 @@
 #define MAX_STA_CONN 4
 
 static const char *TAG = "wifi softAP";
-static httpd_handle_t server = NULL;
+static httpd_handle_t data_server = NULL;
+static httpd_handle_t stream_server = NULL;
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -63,8 +64,8 @@ static camera_config_t camera_config = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG, // YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_QVGA,   // Smaller frame for DRAM (no PSRAM)
+    .pixel_format = PIXFORMAT_JPEG,  // YUV422,GRAYSCALE,RGB565,JPEG
+    .frame_size = FRAMESIZE_240X240, // Smaller frame for DRAM (no PSRAM)
 
     .jpeg_quality = 20, // 0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 1,      // When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
@@ -108,12 +109,29 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-static esp_err_t ws_handler(httpd_req_t *req)
+static esp_err_t ws_test_data_handler(httpd_req_t *req)
 {
-    return ESP_OK;
+    if (req->method == HTTP_GET)
+    {
+        ESP_LOGI(TAG, "Handshake done, test_data connection opened");
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
 }
 
-void webserver_test_task(void *pvParameters)
+static esp_err_t ws_image_stream_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET)
+    {
+        ESP_LOGI(TAG, "Handshake done, image stream connection opened");
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
+}
+
+static void websocket_test_data_task(void *pvParameters)
 {
     static uint32_t inc_num = 0;
     static bool inc_bool = false;
@@ -124,28 +142,36 @@ void webserver_test_task(void *pvParameters)
 
         size_t clients = 10;
         int fds[10];
-        if (httpd_get_client_list(server, &clients, fds) == ESP_OK)
+        if (httpd_get_client_list(data_server, &clients, fds) == ESP_OK)
         {
             for (int i = 0; i < clients; i++)
             {
-                if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
+                if (httpd_ws_get_fd_info(data_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
                 {
-                    inc_bool = !inc_bool;
                     TestData test = {
                         .hello = "World! from ESP",
-                        .beep = inc_num++,
+                        .beep = inc_num,
                         .boop = inc_bool,
                     };
 
                     httpd_ws_frame_t frame = {
                         .type = HTTPD_WS_TYPE_BINARY,
+                        .final = true,
                         .payload = (uint8_t *)&test,
                         .len = sizeof(TestData),
                     };
 
-                    esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
+                    esp_err_t ret = httpd_ws_send_frame_async(data_server, fds[i], &frame);
                     if (ret != ESP_OK)
+                    {
                         ESP_LOGW(TAG, "Failed to send test data to fd %d: %s", fds[i], esp_err_to_name(ret));
+                        httpd_sess_trigger_close(data_server, fds[i]);
+                    }
+                    else
+                    {
+                        inc_num++;
+                        inc_bool = !inc_bool;
+                    }
                 }
             }
         }
@@ -166,11 +192,11 @@ static void image_stream_task(void *pvParameters)
 
         size_t clients = 10;
         int fds[10];
-        if (httpd_get_client_list(server, &clients, fds) == ESP_OK)
+        if (httpd_get_client_list(stream_server, &clients, fds) == ESP_OK)
         {
             for (int i = 0; i < clients; i++)
             {
-                if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
+                if (httpd_ws_get_fd_info(stream_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
                 {
                     httpd_ws_frame_t frame = {
                         .type = HTTPD_WS_TYPE_BINARY,
@@ -178,44 +204,56 @@ static void image_stream_task(void *pvParameters)
                         .len = fb->len,
                     };
 
-                    esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
+                    esp_err_t ret = httpd_ws_send_frame_async(stream_server, fds[i], &frame);
                     if (ret != ESP_OK)
+                    {
                         ESP_LOGW(TAG, "Stream send failed fd %d: %s", fds[i], esp_err_to_name(ret));
+                        httpd_sess_trigger_close(stream_server, fds[i]);
+                    }
                 }
             }
         }
 
         esp_camera_fb_return(fb);
-        vTaskDelay(pdMS_TO_TICKS(33)); // ~30 fps target
+        vTaskDelay(pdMS_TO_TICKS(1 / 24));
     }
 }
 
 void start_webserver(void)
 {
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.enable_so_linger = false;
-    config.max_uri_handlers = 4;
+    httpd_config_t data_config = HTTPD_DEFAULT_CONFIG();
+    data_config.server_port = TEST_DATA_PORT;
+    data_config.ctrl_port = 32768;
 
-    httpd_uri_t ws_data_uri = {
+    httpd_uri_t test_data_get_uri = {
         .uri = "/" TEST_DATA_URI,
         .method = HTTP_GET,
-        .handler = ws_handler,
+        .handler = ws_test_data_handler,
+        .user_ctx = NULL,
         .is_websocket = true,
     };
+
+    if (httpd_start(&data_server, &data_config) == ESP_OK)
+    {
+        httpd_register_uri_handler(data_server, &test_data_get_uri);
+        xTaskCreate(websocket_test_data_task, "test_data_task", 4096, NULL, 5, NULL);
+    }
+
+    httpd_config_t stream_config = HTTPD_DEFAULT_CONFIG();
+    stream_config.server_port = IMAGE_STREAM_PORT;
+    stream_config.ctrl_port = 32769;
 
     httpd_uri_t ws_stream_uri = {
         .uri = "/" IMAGE_STREAM_URI,
         .method = HTTP_GET,
-        .handler = ws_handler,
+        .handler = ws_image_stream_handler,
         .is_websocket = true,
     };
 
-    if (httpd_start(&server, &config) == ESP_OK)
+    if (httpd_start(&stream_server, &stream_config) == ESP_OK)
     {
-        httpd_register_uri_handler(server, &ws_data_uri);
-        httpd_register_uri_handler(server, &ws_stream_uri);
-        xTaskCreate(webserver_test_task, "test_data_task", 4096, NULL, 5, NULL);
-        xTaskCreate(image_stream_task, "image_stream", 4096, NULL, 5, NULL);
+        httpd_register_uri_handler(stream_server, &ws_stream_uri);
+        xTaskCreate(image_stream_task, "image_stream", 8192, NULL, 5, NULL);
     }
 }
 
@@ -270,28 +308,28 @@ void app_main(void)
     wifi_init_softap();
     start_webserver();
 
-    gpio_set_direction(FLASH_LED_PIN, GPIO_MODE_OUTPUT);
+    // gpio_set_direction(FLASH_LED_PIN, GPIO_MODE_OUTPUT);
 
-    if (cam_ret == ESP_OK)
-    {
-        for (int i = 0; i < 2; i++)
-        {
-            gpio_set_level(FLASH_LED_PIN, 1);
-            vTaskDelay(pdMS_TO_TICKS(150));
-            gpio_set_level(FLASH_LED_PIN, 0);
-            vTaskDelay(pdMS_TO_TICKS(150));
-        }
-    }
-    else
-    {
-        for (int i = 0; i < 5; i++)
-        {
-            gpio_set_level(FLASH_LED_PIN, 1);
-            vTaskDelay(pdMS_TO_TICKS(150));
-            gpio_set_level(FLASH_LED_PIN, 0);
-            vTaskDelay(pdMS_TO_TICKS(150));
-        }
-    }
+    // if (cam_ret == ESP_OK)
+    // {
+    //     for (int i = 0; i < 2; i++)
+    //     {
+    //         gpio_set_level(FLASH_LED_PIN, 1);
+    //         vTaskDelay(pdMS_TO_TICKS(150));
+    //         gpio_set_level(FLASH_LED_PIN, 0);
+    //         vTaskDelay(pdMS_TO_TICKS(150));
+    //     }
+    // }
+    // else
+    // {
+    //     for (int i = 0; i < 5; i++)
+    //     {
+    //         gpio_set_level(FLASH_LED_PIN, 1);
+    //         vTaskDelay(pdMS_TO_TICKS(150));
+    //         gpio_set_level(FLASH_LED_PIN, 0);
+    //         vTaskDelay(pdMS_TO_TICKS(150));
+    //     }
+    // }
 
     ESP_ERROR_CHECK(cam_ret);
 }
