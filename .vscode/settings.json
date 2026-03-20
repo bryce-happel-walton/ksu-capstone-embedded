@@ -11,5 +11,7 @@
         "*.conf": "bitbake",
         "*.inc": "bitbake"
     },
-    "chat.disableAIFeatures": true
+    "chat.disableAIFeatures": true,
+    "platformio-ide.activateProjectOnTextEditorChange": true,
+    "platformio-ide.autoPreloadEnvTasks": true
 }
