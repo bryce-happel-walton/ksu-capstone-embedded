@@ -59,7 +59,7 @@ static esp_err_t camera_init(void)
         .xclk_freq_hz = 20000000,
         .ledc_timer = LEDC_TIMER_0,
         .ledc_channel = LEDC_CHANNEL_0,
-        .pixel_format = PIX_FORMAT,
+        .pixel_format = PIXFORMAT_JPEG,
         .frame_size = FRAMESIZE_VGA,
         .jpeg_quality = 12,
         .fb_count = 2,
