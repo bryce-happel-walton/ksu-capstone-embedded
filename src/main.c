@@ -64,11 +64,11 @@ static camera_config_t camera_config = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG,  // YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_240X240, // Smaller frame for DRAM (no PSRAM)
+    .pixel_format = PIXFORMAT_JPEG, // YUV422,GRAYSCALE,RGB565,JPEG
+    .frame_size = FRAMESIZE_VGA,    // Smaller frame for DRAM (no PSRAM)
 
-    .jpeg_quality = 20, // 0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 1,      // When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+    .jpeg_quality = 8, // 0-63, for OV series camera sensors, lower number means higher quality
+    .fb_count = 1,     // When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
     .fb_location = CAMERA_FB_IN_DRAM,
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
 };
@@ -215,7 +215,7 @@ static void image_stream_task(void *pvParameters)
         }
 
         esp_camera_fb_return(fb);
-        vTaskDelay(pdMS_TO_TICKS(1 / 24));
+        vTaskDelay(pdMS_TO_TICKS(1000 / 30));
     }
 }
 
