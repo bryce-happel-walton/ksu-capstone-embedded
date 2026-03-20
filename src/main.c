@@ -143,7 +143,7 @@ void webserver_test_task(void *pvParameters)
     }
 }
 
-static void camera_stream_task(void *pvParameters)
+static void image_stream_task(void *pvParameters)
 {
     while (true)
     {
@@ -188,25 +188,25 @@ void start_webserver(void)
     config.max_uri_handlers = 4;
 
     httpd_uri_t ws_data_uri = {
-        .uri = "/data",
+        .uri = "/" TEST_DATA_URI,
         .method = HTTP_GET,
         .handler = ws_handler,
         .is_websocket = true,
     };
 
-    httpd_uri_t ws_stream_uri = {
-        .uri = "/stream",
-        .method = HTTP_GET,
-        .handler = ws_handler,
-        .is_websocket = true,
-    };
+    // httpd_uri_t ws_stream_uri = {
+    //     .uri = "/" IMAGE_STREAM_URI,
+    //     .method = HTTP_GET,
+    //     .handler = ws_handler,
+    //     .is_websocket = true,
+    // };
 
     if (httpd_start(&server, &config) == ESP_OK)
     {
         httpd_register_uri_handler(server, &ws_data_uri);
-        httpd_register_uri_handler(server, &ws_stream_uri);
-        xTaskCreate(webserver_test_task, "send_task", 4096, NULL, 5, NULL);
-        xTaskCreate(camera_stream_task, "cam_stream", 4096, NULL, 5, NULL);
+        // httpd_register_uri_handler(server, &ws_stream_uri);
+        xTaskCreate(webserver_test_task, "test_data_task", 4096, NULL, 5, NULL);
+        // xTaskCreate(image_stream_task, "image_stream", 4096, NULL, 5, NULL);
     }
 }
 
@@ -255,7 +255,7 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_ERROR_CHECK(camera_init());
+    // ESP_ERROR_CHECK(camera_init());
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_softap();
