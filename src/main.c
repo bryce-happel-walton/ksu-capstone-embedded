@@ -36,7 +36,7 @@
 
 #define MAX_STA_CONN 4
 
-static const char *TAG = "wifi softAP";
+static const char *TAG = "Capstone Speed Sign";
 static httpd_handle_t data_server = NULL;
 static httpd_handle_t stream_server = NULL;
 
@@ -65,12 +65,21 @@ static camera_config_t camera_config = {
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG, // YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_VGA,    // Smaller frame for DRAM (no PSRAM)
 
-    .jpeg_quality = 8, // 0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 1,     // When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+#if CONFIG_SPIRAM
+    .frame_size = FRAMESIZE_VGA,
+    .jpeg_quality = 8,
+    .fb_count = 2,
+    .fb_location = CAMERA_FB_IN_PSRAM,
+    .grab_mode = CAMERA_GRAB_LATEST,
+#else
+    .frame_size = FRAMESIZE_VGA, // Smaller frame for DRAM
+    .jpeg_quality = 8,
+    .fb_count = 1,
     .fb_location = CAMERA_FB_IN_DRAM,
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
+#endif
+
 };
 
 static esp_err_t init_camera(void)
