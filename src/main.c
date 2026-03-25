@@ -14,9 +14,24 @@
 #include "driver/gpio.h"
 #include "shared_lib.h"
 
-// #define FLASH_LED_PIN 4
-
-// ESP32-CAM pin definitions
+#if CONFIG_IDF_TARGET_ESP32S3
+#define CAM_PIN_PWDN -1
+#define CAM_PIN_RESET -1
+#define CAM_PIN_XCLK 15
+#define CAM_PIN_SIOD 4
+#define CAM_PIN_SIOC 5
+#define CAM_PIN_D7 11
+#define CAM_PIN_D6 9
+#define CAM_PIN_D5 8
+#define CAM_PIN_D4 10
+#define CAM_PIN_D3 12
+#define CAM_PIN_D2 18
+#define CAM_PIN_D1 17
+#define CAM_PIN_D0 16
+#define CAM_PIN_VSYNC 6
+#define CAM_PIN_HREF 7
+#define CAM_PIN_PCLK 13
+#else
 #define CAM_PIN_PWDN 32
 #define CAM_PIN_RESET -1
 #define CAM_PIN_XCLK 0
@@ -33,6 +48,7 @@
 #define CAM_PIN_VSYNC 25
 #define CAM_PIN_HREF 23
 #define CAM_PIN_PCLK 22
+#endif
 
 #define MAX_STA_CONN 4
 
@@ -59,27 +75,28 @@ static camera_config_t camera_config = {
     .pin_href = CAM_PIN_HREF,
     .pin_pclk = CAM_PIN_PCLK,
 
-    // XCLK 20MHz or 10MHz for OV2640 double FPS (Experimental)
-    .xclk_freq_hz = 20000000,
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG, // YUV422,GRAYSCALE,RGB565,JPEG
+    .pixel_format = PIXFORMAT_JPEG,
 
-#if CONFIG_SPIRAM
+#if CONFIG_IDF_TARGET_ESP32S3
+    .xclk_freq_hz = 10000000,
+
     .frame_size = FRAMESIZE_VGA,
-    .jpeg_quality = 8,
+    .jpeg_quality = 12,
     .fb_count = 2,
     .fb_location = CAMERA_FB_IN_PSRAM,
     .grab_mode = CAMERA_GRAB_LATEST,
 #else
+    .xclk_freq_hz = 20000000,
+
     .frame_size = FRAMESIZE_VGA, // Smaller frame for DRAM
     .jpeg_quality = 8,
     .fb_count = 1,
     .fb_location = CAMERA_FB_IN_DRAM,
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
 #endif
-
 };
 
 static esp_err_t init_camera(void)
@@ -311,34 +328,13 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
     esp_err_t cam_ret = init_camera();
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_softap();
     start_webserver();
-
-    // gpio_set_direction(FLASH_LED_PIN, GPIO_MODE_OUTPUT);
-
-    // if (cam_ret == ESP_OK)
-    // {
-    //     for (int i = 0; i < 2; i++)
-    //     {
-    //         gpio_set_level(FLASH_LED_PIN, 1);
-    //         vTaskDelay(pdMS_TO_TICKS(150));
-    //         gpio_set_level(FLASH_LED_PIN, 0);
-    //         vTaskDelay(pdMS_TO_TICKS(150));
-    //     }
-    // }
-    // else
-    // {
-    //     for (int i = 0; i < 5; i++)
-    //     {
-    //         gpio_set_level(FLASH_LED_PIN, 1);
-    //         vTaskDelay(pdMS_TO_TICKS(150));
-    //         gpio_set_level(FLASH_LED_PIN, 0);
-    //         vTaskDelay(pdMS_TO_TICKS(150));
-    //     }
-    // }
 
     ESP_ERROR_CHECK(cam_ret);
 }
