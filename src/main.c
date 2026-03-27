@@ -10,45 +10,11 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "esp_camera.h"
+#include "img_converters.h"
 
 #include "driver/gpio.h"
 #include "shared_lib.h"
-
-#if CONFIG_IDF_TARGET_ESP32S3
-#define CAM_PIN_PWDN -1
-#define CAM_PIN_RESET -1
-#define CAM_PIN_XCLK 15
-#define CAM_PIN_SIOD 4
-#define CAM_PIN_SIOC 5
-#define CAM_PIN_D7 11
-#define CAM_PIN_D6 9
-#define CAM_PIN_D5 8
-#define CAM_PIN_D4 10
-#define CAM_PIN_D3 12
-#define CAM_PIN_D2 18
-#define CAM_PIN_D1 17
-#define CAM_PIN_D0 16
-#define CAM_PIN_VSYNC 6
-#define CAM_PIN_HREF 7
-#define CAM_PIN_PCLK 13
-#else
-#define CAM_PIN_PWDN 32
-#define CAM_PIN_RESET -1
-#define CAM_PIN_XCLK 0
-#define CAM_PIN_SIOD 26
-#define CAM_PIN_SIOC 27
-#define CAM_PIN_D7 35
-#define CAM_PIN_D6 34
-#define CAM_PIN_D5 39
-#define CAM_PIN_D4 36
-#define CAM_PIN_D3 21
-#define CAM_PIN_D2 19
-#define CAM_PIN_D1 18
-#define CAM_PIN_D0 5
-#define CAM_PIN_VSYNC 25
-#define CAM_PIN_HREF 23
-#define CAM_PIN_PCLK 22
-#endif
+#include "pindefs.h"
 
 #define MAX_STA_CONN 4
 
@@ -81,10 +47,10 @@ static camera_config_t camera_config = {
     .pixel_format = PIXFORMAT_JPEG,
 
 #if CONFIG_IDF_TARGET_ESP32S3
-    .xclk_freq_hz = 10000000,
+    .xclk_freq_hz = 20000000,
 
-    .frame_size = FRAMESIZE_VGA,
-    .jpeg_quality = 12,
+    .frame_size = FRAMESIZE_HD,
+    .jpeg_quality = 6,
     .fb_count = 2,
     .fb_location = CAMERA_FB_IN_PSRAM,
     .grab_mode = CAMERA_GRAB_LATEST,
@@ -92,16 +58,16 @@ static camera_config_t camera_config = {
     .xclk_freq_hz = 20000000,
 
     .frame_size = FRAMESIZE_VGA, // Smaller frame for DRAM
-    .jpeg_quality = 8,
+    .jpeg_quality = 8,           // lowest compression possible on esp32-cam
     .fb_count = 1,
     .fb_location = CAMERA_FB_IN_DRAM,
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
 #endif
+
 };
 
 static esp_err_t init_camera(void)
 {
-    // initialize the camera
     esp_err_t ret = esp_camera_init(&camera_config);
     if (ret != ESP_OK)
     {
@@ -175,7 +141,7 @@ static void websocket_test_data_task(void *pvParameters)
                 if (httpd_ws_get_fd_info(data_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
                 {
                     TestData test = {
-                        .hello = "World! from ESP",
+                        .hello = "Data from ESP!",
                         .beep = inc_num,
                         .boop = inc_bool,
                     };
@@ -211,7 +177,6 @@ static void image_stream_task(void *pvParameters)
         camera_fb_t *fb = esp_camera_fb_get();
         if (!fb)
         {
-            ESP_LOGE(TAG, "Failed to capture frame");
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
@@ -219,6 +184,7 @@ static void image_stream_task(void *pvParameters)
         size_t clients = 10;
         int fds[10];
         if (httpd_get_client_list(stream_server, &clients, fds) == ESP_OK)
+
         {
             for (int i = 0; i < clients; i++)
             {
@@ -241,6 +207,7 @@ static void image_stream_task(void *pvParameters)
         }
 
         esp_camera_fb_return(fb);
+
         vTaskDelay(pdMS_TO_TICKS(1000 / 30));
     }
 }
