@@ -13,6 +13,8 @@
 #define IMAGE_STREAM_URI "image_stream"
 #define IMAGE_STREAM_PORT 81
 
+#define LED_COUNT 1024 // 16*16 * 4
+
 typedef struct __attribute__((packed))
 {
     char hello[32];

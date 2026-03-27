@@ -1,4 +1,3 @@
-#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_mac.h"
@@ -10,9 +9,9 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "esp_camera.h"
-#include "img_converters.h"
-
+#include "led_strip.h"
 #include "driver/gpio.h"
+
 #include "shared_lib.h"
 #include "pindefs.h"
 
