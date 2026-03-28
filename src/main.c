@@ -20,6 +20,7 @@
 static const char *TAG = "Capstone Speed Sign";
 static httpd_handle_t data_server = NULL;
 static httpd_handle_t stream_server = NULL;
+static httpd_handle_t input_server = NULL;
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -70,7 +71,7 @@ led_strip_handle_t configure_led(void)
     // LED strip general initialization, according to your led board design
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_STRIP_GPIO_PIN,
-        .max_leds = LED_COUNT,
+        .max_leds = PIXELS,
         .led_model = LED_MODEL_WS2812,
         // set the color order of the strip: GRB
         .color_component_format = {
@@ -155,6 +156,47 @@ esp_err_t ws_image_stream_handler(httpd_req_t *req)
     }
 
     return ESP_FAIL;
+}
+
+esp_err_t ws_input_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET)
+    {
+        ESP_LOGI(TAG, "Handshake done, ws_input connection opened");
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .payload = NULL,
+    };
+
+    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ws_input: failed to get frame len: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (frame.len != sizeof(InputData))
+    {
+        ESP_LOGW(TAG, "ws_input: expected %d bytes, got %d", (int)sizeof(InputData), (int)frame.len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    InputData input;
+    frame.payload = (uint8_t *)&input;
+
+    ret = httpd_ws_recv_frame(req, &frame, frame.len);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ws_input: failed to recv frame: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "ws_input received: placeholder=%lu", (unsigned long)input.placeholder);
+
+    return ESP_OK;
 }
 
 void websocket_test_data_task(void *pvParameters)
@@ -246,24 +288,69 @@ void image_stream_task(void *pvParameters)
     }
 }
 
-uint32_t led_index(uint32_t row, uint32_t col)
+int led_index(int row, int col)
 {
+    int panel_row = row / LED_PANEL_ROWS;
+    int panel_col = col / LED_PANEL_COLS;
+
+    int local_row = row % LED_PANEL_ROWS;
+    int local_col = col % LED_PANEL_COLS;
+
+    int chain_pos;
+    bool flip_row, flip_col;
+    if (panel_row == 1 && panel_col == 1)
+    {
+        chain_pos = 0;
+        flip_row = true;
+        flip_col = false; // bottom-right
+    }
+    else if (panel_row == 0 && panel_col == 1)
+    {
+        chain_pos = 1;
+        flip_row = true;
+        flip_col = true; // top-right
+    }
+    else if (panel_row == 0 && panel_col == 0)
+    {
+        chain_pos = 2;
+        flip_row = false;
+        flip_col = true; // top-left
+    }
+    else
+    {
+        chain_pos = 3;
+        flip_row = false;
+        flip_col = false; // bottom-left
+    }
+
+    int effective_row = flip_row ? (LED_PANEL_ROWS - 1 - local_row) : local_row;
+    int effective_col = flip_col ? (LED_PANEL_COLS - 1 - local_col) : local_col;
+
+    return chain_pos * (LED_PANEL_ROWS * LED_PANEL_COLS) + effective_row * LED_PANEL_COLS + effective_col;
 }
 
 void led_task(void *pvParameters)
 {
     led_strip_handle_t led_strip = (led_strip_handle_t)pvParameters;
 
+    int max_row = LED_PANEL_ROWS * LED_PANELS_HIGH - 1;
+    int max_col = LED_PANEL_COLS * LED_PANELS_WIDE - 1;
+    int corners[][2] = {
+        {0, 0},
+        {0, max_col},
+        {max_row, max_col},
+        {max_row, 0},
+    };
+
+    int i = 0;
     while (true)
     {
-        for (int i = 0; i < PIXELS; i++)
-        {
-            led_strip_clear(led_strip);
-            vTaskDelay(pdMS_TO_TICKS(50));
-            led_strip_set_pixel(led_strip, i, 255, 0, 0);
-            led_strip_refresh(led_strip);
-            vTaskDelay(pdMS_TO_TICKS(300));
-        }
+        led_strip_clear(led_strip);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        led_strip_set_pixel(led_strip, led_index(corners[i][0], corners[i][1]), 10, 0, 0);
+        led_strip_refresh(led_strip);
+        i = (i + 1) % 4;
+        vTaskDelay(pdMS_TO_TICKS(300));
     }
 }
 
@@ -302,6 +389,22 @@ void start_webserver(void)
     {
         httpd_register_uri_handler(stream_server, &ws_stream_uri);
         xTaskCreate(image_stream_task, "image_stream", 8192, NULL, 5, NULL);
+    }
+
+    httpd_config_t input_config = HTTPD_DEFAULT_CONFIG();
+    input_config.server_port = WS_INPUT_PORT;
+    input_config.ctrl_port = 32770;
+
+    httpd_uri_t ws_input_uri = {
+        .uri = "/" WS_INPUT_URI,
+        .method = HTTP_GET,
+        .handler = ws_input_handler,
+        .is_websocket = true,
+    };
+
+    if (httpd_start(&input_server, &input_config) == ESP_OK)
+    {
+        httpd_register_uri_handler(input_server, &ws_input_uri);
     }
 }
 
