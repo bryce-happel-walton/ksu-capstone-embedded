@@ -13,7 +13,10 @@
 #define IMAGE_STREAM_URI "image_stream"
 #define IMAGE_STREAM_PORT 81
 
-#define LED_COUNT 1024 // 16*16 * 4
+#define LED_PANEL_ROWS 16
+#define LED_PANEL_COLS 16
+#define LED_PANELS 4
+const uint32_t PIXELS = LED_PANEL_ROWS * LED_PANEL_COLS * LED_PANELS;
 
 typedef struct __attribute__((packed))
 {

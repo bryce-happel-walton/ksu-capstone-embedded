@@ -17,6 +17,9 @@
 #define CAM_PIN_VSYNC 6
 #define CAM_PIN_HREF 7
 #define CAM_PIN_PCLK 13
+
+#define LED_STRIP_GPIO_PIN 47
+
 #else
 #define CAM_PIN_PWDN 32
 #define CAM_PIN_RESET -1

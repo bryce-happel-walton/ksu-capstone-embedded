@@ -65,7 +65,42 @@ static camera_config_t camera_config = {
 
 };
 
-static esp_err_t init_camera(void)
+led_strip_handle_t configure_led(void)
+{
+    // LED strip general initialization, according to your led board design
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = LED_STRIP_GPIO_PIN,
+        .max_leds = LED_COUNT,
+        .led_model = LED_MODEL_WS2812,
+        // set the color order of the strip: GRB
+        .color_component_format = {
+            .format = {
+                .r_pos = 1,          // red is the second byte in the color data
+                .g_pos = 0,          // green is the first byte in the color data
+                .b_pos = 2,          // blue is the third byte in the color data
+                .num_components = 3, // total 3 color components
+            },
+        },
+        .flags = {
+            .invert_out = false, // don't invert the output signal
+        }};
+
+    // LED strip backend configuration: SPI
+    led_strip_spi_config_t spi_config = {
+        .clk_src = SPI_CLK_SRC_DEFAULT,
+        .spi_bus = SPI2_HOST,
+        .flags = {
+            .with_dma = true,
+        }};
+
+    // LED Strip object handle
+    led_strip_handle_t led_strip;
+    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
+    ESP_LOGI(TAG, "Created LED strip object with SPI backend");
+    return led_strip;
+}
+
+esp_err_t init_camera(void)
 {
     esp_err_t ret = esp_camera_init(&camera_config);
     if (ret != ESP_OK)
@@ -76,8 +111,8 @@ static esp_err_t init_camera(void)
     return ret;
 }
 
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
+void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                        int32_t event_id, void *event_data)
 {
     switch (event_id)
     {
@@ -100,7 +135,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-static esp_err_t ws_test_data_handler(httpd_req_t *req)
+esp_err_t ws_test_data_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET)
     {
@@ -111,7 +146,7 @@ static esp_err_t ws_test_data_handler(httpd_req_t *req)
     return ESP_FAIL;
 }
 
-static esp_err_t ws_image_stream_handler(httpd_req_t *req)
+esp_err_t ws_image_stream_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET)
     {
@@ -122,7 +157,7 @@ static esp_err_t ws_image_stream_handler(httpd_req_t *req)
     return ESP_FAIL;
 }
 
-static void websocket_test_data_task(void *pvParameters)
+void websocket_test_data_task(void *pvParameters)
 {
     static uint32_t inc_num = 0;
     static bool inc_bool = false;
@@ -169,7 +204,7 @@ static void websocket_test_data_task(void *pvParameters)
     }
 }
 
-static void image_stream_task(void *pvParameters)
+void image_stream_task(void *pvParameters)
 {
     while (true)
     {
@@ -208,6 +243,27 @@ static void image_stream_task(void *pvParameters)
         esp_camera_fb_return(fb);
 
         vTaskDelay(pdMS_TO_TICKS(1000 / 30));
+    }
+}
+
+uint32_t led_index(uint32_t row, uint32_t col)
+{
+}
+
+void led_task(void *pvParameters)
+{
+    led_strip_handle_t led_strip = (led_strip_handle_t)pvParameters;
+
+    while (true)
+    {
+        for (int i = 0; i < PIXELS; i++)
+        {
+            led_strip_clear(led_strip);
+            vTaskDelay(pdMS_TO_TICKS(50));
+            led_strip_set_pixel(led_strip, i, 255, 0, 0);
+            led_strip_refresh(led_strip);
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
     }
 }
 
@@ -297,10 +353,12 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(3000));
 
     esp_err_t cam_ret = init_camera();
+    led_strip_handle_t led_strip = configure_led();
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_softap();
     start_webserver();
 
     ESP_ERROR_CHECK(cam_ret);
+    xTaskCreate(led_task, "led_task", 4096, (void *)led_strip, 5, NULL);
 }
