@@ -9,22 +9,22 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "esp_camera.h"
-#include "led_strip.h"
-#include "driver/gpio.h"
 
 #include "shared_lib.h"
 #include "pindefs.h"
+#include "led.h"
 
 #define MAX_STA_CONN 4
 
 static const char *TAG = "Capstone Speed Sign";
 static httpd_handle_t server = NULL;
 
-enum ws_endpoint {
+typedef enum
+{
     WS_ENDPOINT_DATA = 1,
     WS_ENDPOINT_STREAM,
     WS_ENDPOINT_INPUT,
-};
+} ws_endpoint;
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -69,41 +69,6 @@ static camera_config_t camera_config = {
 #endif
 
 };
-
-led_strip_handle_t configure_led(void)
-{
-    // LED strip general initialization, according to your led board design
-    led_strip_config_t strip_config = {
-        .strip_gpio_num = LED_STRIP_GPIO_PIN,
-        .max_leds = PIXELS,
-        .led_model = LED_MODEL_WS2812,
-        // set the color order of the strip: GRB
-        .color_component_format = {
-            .format = {
-                .r_pos = 1,          // red is the second byte in the color data
-                .g_pos = 0,          // green is the first byte in the color data
-                .b_pos = 2,          // blue is the third byte in the color data
-                .num_components = 3, // total 3 color components
-            },
-        },
-        .flags = {
-            .invert_out = false, // don't invert the output signal
-        }};
-
-    // LED strip backend configuration: SPI
-    led_strip_spi_config_t spi_config = {
-        .clk_src = SPI_CLK_SRC_DEFAULT,
-        .spi_bus = SPI2_HOST,
-        .flags = {
-            .with_dma = true,
-        }};
-
-    // LED Strip object handle
-    led_strip_handle_t led_strip;
-    ESP_ERROR_CHECK(led_strip_new_spi_device(&strip_config, &spi_config, &led_strip));
-    ESP_LOGI(TAG, "Created LED strip object with SPI backend");
-    return led_strip;
-}
 
 esp_err_t init_camera(void)
 {
@@ -201,7 +166,8 @@ esp_err_t ws_input_handler(httpd_req_t *req)
         return ret;
     }
 
-    ESP_LOGI(TAG, "ws_input received: placeholder=%lu", (unsigned long)input.placeholder);
+    current_display_pattern = input.display_pattern;
+    ESP_LOGI(TAG, "ws_input received: placeholder=%lu, display_pattern=%d", (unsigned long)input.placeholder, (int)input.display_pattern);
 
     return ESP_OK;
 }
@@ -294,72 +260,6 @@ void image_stream_task(void *pvParameters)
         esp_camera_fb_return(fb);
 
         vTaskDelay(pdMS_TO_TICKS(1000 / 30));
-    }
-}
-
-int led_index(int row, int col)
-{
-    int panel_row = row / LED_PANEL_ROWS;
-    int panel_col = col / LED_PANEL_COLS;
-
-    int local_row = row % LED_PANEL_ROWS;
-    int local_col = col % LED_PANEL_COLS;
-
-    int chain_pos;
-    bool flip_row, flip_col;
-    if (panel_row == 1 && panel_col == 1)
-    {
-        chain_pos = 0;
-        flip_row = true;
-        flip_col = false; // bottom-right
-    }
-    else if (panel_row == 0 && panel_col == 1)
-    {
-        chain_pos = 1;
-        flip_row = true;
-        flip_col = true; // top-right
-    }
-    else if (panel_row == 0 && panel_col == 0)
-    {
-        chain_pos = 2;
-        flip_row = false;
-        flip_col = true; // top-left
-    }
-    else
-    {
-        chain_pos = 3;
-        flip_row = false;
-        flip_col = false; // bottom-left
-    }
-
-    int effective_row = flip_row ? (LED_PANEL_ROWS - 1 - local_row) : local_row;
-    int effective_col = flip_col ? (LED_PANEL_COLS - 1 - local_col) : local_col;
-
-    return chain_pos * (LED_PANEL_ROWS * LED_PANEL_COLS) + effective_row * LED_PANEL_COLS + effective_col;
-}
-
-void led_task(void *pvParameters)
-{
-    led_strip_handle_t led_strip = (led_strip_handle_t)pvParameters;
-
-    int max_row = LED_PANEL_ROWS * LED_PANELS_HIGH - 1;
-    int max_col = LED_PANEL_COLS * LED_PANELS_WIDE - 1;
-    int corners[][2] = {
-        {0, 0},
-        {0, max_col},
-        {max_row, max_col},
-        {max_row, 0},
-    };
-
-    int i = 0;
-    while (true)
-    {
-        led_strip_clear(led_strip);
-        vTaskDelay(pdMS_TO_TICKS(10));
-        led_strip_set_pixel(led_strip, led_index(corners[i][0], corners[i][1]), 10, 0, 0);
-        led_strip_refresh(led_strip);
-        i = (i + 1) % 4;
-        vTaskDelay(pdMS_TO_TICKS(300));
     }
 }
 

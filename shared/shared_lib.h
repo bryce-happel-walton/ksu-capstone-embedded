@@ -25,6 +25,8 @@ typedef enum
     DISPLAY_PATTERN_CORNERS,
     DISPLAY_PATTERN_CENTERS,
     DISPLAY_PATTERN_ENCIRCLE,
+    DISPLAY_PATTERN_SHRINK_ENCIRCLE,
+    DISPLAY_PATTERN_SHRINK_SQUARE,
 } TestDisplayPattern;
 
 typedef struct __attribute__((packed))
