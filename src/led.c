@@ -7,8 +7,9 @@
 #include "shared_lib.h"
 #include "pindefs.h"
 #include "led.h"
+#include "font.h"
 
-volatile TestDisplayPattern current_display_pattern = DISPLAY_PATTERN_CORNERS;
+volatile TestDisplayPattern current_display_pattern = DISPLAY_PATTERN_SLOW_DOWN;
 
 led_strip_handle_t configure_led(void)
 {
@@ -98,8 +99,6 @@ static void led_pattern_corners(led_strip_handle_t led_strip, int *step)
         {max_row, 0},
     };
 
-    led_strip_clear(led_strip);
-    vTaskDelay(pdMS_TO_TICKS(MIN_LED_RESET_TIME_MS));
     led_strip_set_pixel(led_strip, led_index(corners[*step][0], corners[*step][1]), 10, 0, 0);
     led_strip_refresh(led_strip);
     *step = (*step + 1) % 4;
@@ -117,8 +116,6 @@ static void led_pattern_centers(led_strip_handle_t led_strip, int *step)
         {center_row, center_col - 1},     // center of bottom-left panel
     };
 
-    led_strip_clear(led_strip);
-    vTaskDelay(pdMS_TO_TICKS(MIN_LED_RESET_TIME_MS));
     led_strip_set_pixel(led_strip, led_index(centers[*step][0], centers[*step][1]), 0, 10, 0);
     led_strip_refresh(led_strip);
     *step = (*step + 1) % 4;
@@ -155,8 +152,6 @@ static void led_pattern_encircle(led_strip_handle_t led_strip, int *step)
         col = 0;
     }
 
-    led_strip_clear(led_strip);
-    vTaskDelay(pdMS_TO_TICKS(MIN_LED_RESET_TIME_MS));
     led_strip_set_pixel(led_strip, led_index(row, col), 0, 0, 10);
     led_strip_refresh(led_strip);
     *step = (*step + 1) % perimeter;
@@ -219,8 +214,6 @@ static void led_pattern_shrink_encircle(led_strip_handle_t led_strip, int *step)
         col = left;
     }
 
-    led_strip_clear(led_strip);
-    vTaskDelay(pdMS_TO_TICKS(MIN_LED_RESET_TIME_MS));
     led_strip_set_pixel(led_strip, led_index(row, col), 0, 0, 10);
     led_strip_refresh(led_strip);
     (*step)++;
@@ -258,6 +251,92 @@ static void led_pattern_shrink_square(led_strip_handle_t led_strip, int *step)
     vTaskDelay(pdMS_TO_TICKS(300));
 }
 
+static void led_pattern_font_test(led_strip_handle_t led_strip, int *step)
+{
+    static const int GLYPH_W = 5;
+    static const int GLYPH_H = 7;
+    static const int COL_STEP = 6; // glyph width + 1px gap
+    static const int ROW_STEP = 8; // glyph height + 1px gap
+    static const int COLS = 5;
+    static const int ROWS = 4;
+    static const int TOTAL = sizeof(font5x7) / sizeof(font5x7[0]);
+
+    static const int COL_ORIGIN = 1;
+    static const int ROW_ORIGIN = 0;
+
+    for (int ti = 0; ti < ROWS * COLS; ti++)
+    {
+        int char_idx = (*step + ti) % TOTAL;
+        char *bitmap = font5x7[char_idx];
+        int base_row = ROW_ORIGIN + (ti / COLS) * ROW_STEP;
+        int base_col = COL_ORIGIN + (ti % COLS) * COL_STEP;
+
+        for (int r = 0; r < GLYPH_H; r++)
+            for (int c = 0; c < GLYPH_W; c++)
+                if (bitmap[r] & (1 << c))
+                    led_strip_set_pixel(led_strip, led_index(base_row + r, base_col + c), 10, 0, 0);
+    }
+
+    led_strip_refresh(led_strip);
+    *step = (*step + 1) % TOTAL;
+    vTaskDelay(pdMS_TO_TICKS(200));
+}
+
+static void led_pattern_number_font_test(led_strip_handle_t led_strip, int *step)
+{
+    int left_digit = *step % 10;
+    int right_digit = (9 - *step + 10) % 10;
+
+    int num_rows = sizeof(font_num[0]) / sizeof(font_num[0][0]); // 32
+    int num_cols = LED_PANEL_COLS;                               // 16
+
+    for (int row = 0; row < num_rows; row++)
+    {
+        short left_row = font_num[left_digit][row];
+        short right_row = font_num[right_digit][row];
+
+        for (int col = 0; col < num_cols; col++)
+        {
+            if (left_row & (1 << col))
+                led_strip_set_pixel(led_strip, led_index(row, col), 10, 0, 0);
+            if (right_row & (1 << col))
+                led_strip_set_pixel(led_strip, led_index(row, col + num_cols), 0, 10, 0);
+        }
+    }
+
+    led_strip_refresh(led_strip);
+    *step = (*step + 1) % 10;
+    vTaskDelay(pdMS_TO_TICKS(500));
+}
+
+static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
+{
+    const char *line1 = "SLOW";
+    const char *line2 = "DOWN";
+    const int start_row = 8; // (32 - 16) / 2
+
+    for (int bitmap_index = 0; bitmap_index < 4; bitmap_index++)
+    {
+        char *bitmap_1 = font8x8_basic[(unsigned char)line1[bitmap_index]];
+        char *bitmap_2 = font8x8_basic[(unsigned char)line2[bitmap_index]];
+        int col_base = bitmap_index * 8;
+
+        for (int r = 0; r < 8; r++)
+        {
+            for (int c = 0; c < 8; c++)
+            {
+                if (bitmap_1[r] & (1 << c))
+                    led_strip_set_pixel(led_strip, led_index(start_row + r, col_base + c), 10, 4, 0);
+                if (bitmap_2[r] & (1 << c))
+                    led_strip_set_pixel(led_strip, led_index(start_row + 8 + r, col_base + c), 10, 4, 0);
+            }
+        }
+    }
+
+    led_strip_refresh(led_strip);
+    vTaskDelay(pdMS_TO_TICKS(500));
+}
+
 void led_task(void *pvParameters)
 {
     led_strip_handle_t led_strip = (led_strip_handle_t)pvParameters;
@@ -272,6 +351,9 @@ void led_task(void *pvParameters)
             step = 0;
             last_pattern = current_display_pattern;
         }
+
+        led_strip_clear(led_strip);
+        vTaskDelay(pdMS_TO_TICKS(MIN_LED_RESET_TIME_MS));
 
         switch (current_display_pattern)
         {
@@ -289,6 +371,15 @@ void led_task(void *pvParameters)
             break;
         case DISPLAY_PATTERN_SHRINK_SQUARE:
             led_pattern_shrink_square(led_strip, &step);
+            break;
+        case DISPLAY_PATTERN_FONT_TEST:
+            led_pattern_font_test(led_strip, &step);
+            break;
+        case DISPLAY_PATTERN_FONT_NUM_SEGMENT_TEST:
+            led_pattern_number_font_test(led_strip, &step);
+            break;
+        case DISPLAY_PATTERN_SLOW_DOWN:
+            led_pattern_slow_down(led_strip, &step);
             break;
         }
     }
