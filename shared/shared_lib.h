@@ -41,6 +41,5 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
-    uint32_t placeholder;
     TestDisplayPattern display_pattern;
 } InputData;

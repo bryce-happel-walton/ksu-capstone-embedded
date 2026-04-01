@@ -167,7 +167,6 @@ esp_err_t ws_input_handler(httpd_req_t *req)
     }
 
     current_display_pattern = input.display_pattern;
-    ESP_LOGI(TAG, "ws_input received: placeholder=%lu, display_pattern=%d", (unsigned long)input.placeholder, (int)input.display_pattern);
 
     return ESP_OK;
 }
