@@ -18,6 +18,10 @@
 #define CAM_PIN_HREF 7
 #define CAM_PIN_PCLK 13
 
+#define RADAR_TX 42
+#define RADAR_RX 41
+#define RADAR_OT1 21
+
 #define LED_STRIP_GPIO_PIN 47
 
 #else

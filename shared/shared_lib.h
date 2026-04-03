@@ -7,7 +7,7 @@
 #define WIFI_PASS "ksu_capstone_giga#oreo"
 #define WIFI_CHANNEL 1
 
-#define TEST_DATA_URI "data"
+#define RADAR_DATA_URI "data"
 
 #define IMAGE_STREAM_URI "image_stream"
 
@@ -43,3 +43,11 @@ typedef struct __attribute__((packed))
 {
     TestDisplayPattern display_pattern;
 } InputData;
+
+typedef struct __attribute__((packed))
+{
+    uint8_t type;
+    uint8_t sub_type;
+    uint8_t data[32];
+    uint8_t data_len;
+} RadarData;

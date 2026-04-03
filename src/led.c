@@ -171,10 +171,15 @@ static void led_pattern_shrink_encircle(led_strip_handle_t led_strip, int *step)
         int rows_in_layer = total_rows - 2 * layer;
         int cols_in_layer = total_cols - 2 * layer;
         if ((rows_in_layer <= 0) || (cols_in_layer <= 0))
+        {
             break;
+        }
+
         int perimeter = 2 * (rows_in_layer + cols_in_layer) - 4;
         if (pos < perimeter)
+        {
             break;
+        }
         pos -= perimeter;
         layer++;
     }
@@ -272,9 +277,15 @@ static void led_pattern_font_test(led_strip_handle_t led_strip, int *step)
         int base_col = COL_ORIGIN + (ti % COLS) * COL_STEP;
 
         for (int r = 0; r < GLYPH_H; r++)
+        {
             for (int c = 0; c < GLYPH_W; c++)
+            {
                 if (bitmap[r] & (1 << c))
+                {
                     led_strip_set_pixel(led_strip, led_index(base_row + r, base_col + c), 10, 0, 0);
+                }
+            }
+        }
     }
 
     led_strip_refresh(led_strip);
@@ -298,9 +309,13 @@ static void led_pattern_number_font_test(led_strip_handle_t led_strip, int *step
         for (int col = 0; col < num_cols; col++)
         {
             if (left_row & (1 << col))
+            {
                 led_strip_set_pixel(led_strip, led_index(row, col), 10, 0, 0);
+            }
             if (right_row & (1 << col))
+            {
                 led_strip_set_pixel(led_strip, led_index(row, col + num_cols), 0, 10, 0);
+            }
         }
     }
 
@@ -326,9 +341,13 @@ static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
             for (int c = 0; c < 8; c++)
             {
                 if (bitmap_1[r] & (1 << c))
+                {
                     led_strip_set_pixel(led_strip, led_index(start_row + r, col_base + c), 10, 4, 0);
+                }
                 if (bitmap_2[r] & (1 << c))
+                {
                     led_strip_set_pixel(led_strip, led_index(start_row + 8 + r, col_base + c), 10, 4, 0);
+                }
             }
         }
     }
@@ -358,29 +377,45 @@ void led_task(void *pvParameters)
         switch (current_display_pattern)
         {
         case DISPLAY_PATTERN_CORNERS:
+        {
             led_pattern_corners(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_CENTERS:
+        {
             led_pattern_centers(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_ENCIRCLE:
+        {
             led_pattern_encircle(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_SHRINK_ENCIRCLE:
+        {
             led_pattern_shrink_encircle(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_SHRINK_SQUARE:
+        {
             led_pattern_shrink_square(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_FONT_TEST:
+        {
             led_pattern_font_test(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_FONT_NUM_SEGMENT_TEST:
+        {
             led_pattern_number_font_test(led_strip, &step);
             break;
+        }
         case DISPLAY_PATTERN_SLOW_DOWN:
+        {
             led_pattern_slow_down(led_strip, &step);
             break;
+        }
         }
     }
 }

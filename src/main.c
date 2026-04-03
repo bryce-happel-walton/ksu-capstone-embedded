@@ -10,6 +10,7 @@
 #include "lwip/sys.h"
 #include "esp_camera.h"
 
+#include "radar.h"
 #include "shared_lib.h"
 #include "pindefs.h"
 #include "led.h"
@@ -105,11 +106,11 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-esp_err_t ws_test_data_handler(httpd_req_t *req)
+esp_err_t ws_radar_data_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET)
     {
-        ESP_LOGI(TAG, "Handshake done, test_data connection opened");
+        ESP_LOGI(TAG, "Handshake done, radar data connection opened");
         httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_DATA, NULL);
         return ESP_OK;
     }
@@ -173,12 +174,11 @@ esp_err_t ws_input_handler(httpd_req_t *req)
 
 void websocket_test_data_task(void *pvParameters)
 {
-    static uint32_t inc_num = 0;
-    static bool inc_bool = false;
-
     while (true)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
+
+        RadarData snapshot = (RadarData)latest_radar_data;
 
         size_t clients = 10;
         int fds[10];
@@ -189,29 +189,18 @@ void websocket_test_data_task(void *pvParameters)
                 if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET &&
                     (int)(intptr_t)httpd_sess_get_ctx(server, fds[i]) == WS_ENDPOINT_DATA)
                 {
-                    TestData test = {
-                        .hello = "Data from ESP!",
-                        .beep = inc_num,
-                        .boop = inc_bool,
-                    };
-
                     httpd_ws_frame_t frame = {
                         .type = HTTPD_WS_TYPE_BINARY,
                         .final = true,
-                        .payload = (uint8_t *)&test,
-                        .len = sizeof(TestData),
+                        .payload = (uint8_t *)&snapshot,
+                        .len = sizeof(RadarData),
                     };
 
                     esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
                     if (ret != ESP_OK)
                     {
-                        ESP_LOGW(TAG, "Failed to send test data to fd %d: %s", fds[i], esp_err_to_name(ret));
+                        ESP_LOGW(TAG, "Failed to send radar data to fd %d: %s", fds[i], esp_err_to_name(ret));
                         httpd_sess_trigger_close(server, fds[i]);
-                    }
-                    else
-                    {
-                        inc_num++;
-                        inc_bool = !inc_bool;
                     }
                 }
             }
@@ -275,23 +264,23 @@ void start_webserver(void)
         return;
     }
 
-    httpd_uri_t test_data_uri = {
-        .uri = "/" TEST_DATA_URI,
+    httpd_uri_t radar_data_uri = {
+        .uri = "/" RADAR_DATA_URI,
         .method = HTTP_GET,
-        .handler = ws_test_data_handler,
+        .handler = ws_radar_data_handler,
         .is_websocket = true,
     };
-    httpd_register_uri_handler(server, &test_data_uri);
+    httpd_register_uri_handler(server, &radar_data_uri);
     xTaskCreate(websocket_test_data_task, "test_data_task", 4096, NULL, 5, NULL);
 
-    httpd_uri_t stream_uri = {
-        .uri = "/" IMAGE_STREAM_URI,
-        .method = HTTP_GET,
-        .handler = ws_image_stream_handler,
-        .is_websocket = true,
-    };
-    httpd_register_uri_handler(server, &stream_uri);
-    xTaskCreate(image_stream_task, "image_stream", 8192, NULL, 5, NULL);
+    // httpd_uri_t stream_uri = {
+    //     .uri = "/" IMAGE_STREAM_URI,
+    //     .method = HTTP_GET,
+    //     .handler = ws_image_stream_handler,
+    //     .is_websocket = true,
+    // };
+    // httpd_register_uri_handler(server, &stream_uri);
+    // xTaskCreate(image_stream_task, "image_stream", 8192, NULL, 5, NULL);
 
     httpd_uri_t input_uri = {
         .uri = "/" WS_INPUT_URI,
@@ -349,13 +338,15 @@ void app_main(void)
 
     vTaskDelay(pdMS_TO_TICKS(3000));
 
-    esp_err_t cam_ret = init_camera();
+    // esp_err_t cam_ret = init_camera();
     led_strip_handle_t led_strip = configure_led();
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_softap();
     start_webserver();
 
-    ESP_ERROR_CHECK(cam_ret);
+    // ESP_ERROR_CHECK(cam_ret);
+    ESP_ERROR_CHECK(radar_init());
+    xTaskCreate(radar_task, "radar_task", 4096, NULL, 5, NULL);
     xTaskCreate(led_task, "led_task", 4096, (void *)led_strip, 5, NULL);
 }
