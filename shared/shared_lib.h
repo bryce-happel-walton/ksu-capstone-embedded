@@ -46,7 +46,7 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
-    uint8_t type;
+    uint8_t packet_type;
     uint8_t sub_type;
     uint8_t data[32];
     uint8_t data_len;

@@ -103,7 +103,7 @@ static bool read_frame(radar_frame_t *out_frame)
         return false;
     }
 
-    out_frame->type = type;
+    out_frame->packet_type = type;
     out_frame->sub_type = sub_type;
     out_frame->data_len = payload_len - 1; // exclude checksum
     for (int i = 0; i < out_frame->data_len; i++)
@@ -116,7 +116,7 @@ static bool read_frame(radar_frame_t *out_frame)
 
 static void log_frame(const radar_frame_t *frame)
 {
-    ESP_LOGI(TAG, "type=0x%02x sub=0x%02x data(%d):", frame->type, frame->sub_type, frame->data_len);
+    ESP_LOGI(TAG, "type=0x%02x sub=0x%02x data(%d):", frame->packet_type, frame->sub_type, frame->data_len);
     ESP_LOG_BUFFER_HEX(TAG, frame->data, frame->data_len);
 
     if (frame->data_len >= 5)
