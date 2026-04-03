@@ -46,8 +46,17 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
-    uint8_t packet_type;
-    uint8_t sub_type;
-    uint8_t data[32];
-    uint8_t data_len;
-} RadarData;
+    int8_t angle;      // degrees  (reported value -0x80 for actual)
+    uint8_t distance;  // meters
+    uint8_t direction; // 0 - away | 1 - towards  ?? might be reversed pdf table shows 0 away, example uses 0 towards
+    uint8_t speed;     // km/h
+    uint8_t snr;       // signal/noise
+} VehicleTarget;
+
+#define MAX_RADAR_TARGETS 3
+
+typedef struct __attribute__((packed))
+{
+    uint8_t count;
+    VehicleTarget targets[MAX_RADAR_TARGETS];
+} RadarPayload;

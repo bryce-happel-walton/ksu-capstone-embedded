@@ -178,7 +178,7 @@ void websocket_test_data_task(void *pvParameters)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
 
-        RadarData snapshot = (RadarData)latest_radar_data;
+        RadarPayload snapshot = latest_radar_payload;
 
         size_t clients = 10;
         int fds[10];
@@ -193,7 +193,7 @@ void websocket_test_data_task(void *pvParameters)
                         .type = HTTPD_WS_TYPE_BINARY,
                         .final = true,
                         .payload = (uint8_t *)&snapshot,
-                        .len = sizeof(RadarData),
+                        .len = sizeof(RadarPayload),
                     };
 
                     esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
