@@ -30,6 +30,7 @@ typedef enum
     DISPLAY_PATTERN_FONT_TEST,
     DISPLAY_PATTERN_FONT_NUM_SEGMENT_TEST,
     DISPLAY_PATTERN_SLOW_DOWN,
+    DISPLAY_PATTERN_SPEED,
 } TestDisplayPattern;
 
 typedef struct __attribute__((packed))

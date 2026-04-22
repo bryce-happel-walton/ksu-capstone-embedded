@@ -9,6 +9,10 @@
 #include "led.h"
 #include "font.h"
 
+#ifdef FEATURE_RADAR
+#include "radar.h"
+#endif
+
 volatile TestDisplayPattern current_display_pattern = DISPLAY_PATTERN_SLOW_DOWN;
 
 led_strip_handle_t configure_led(void)
@@ -356,6 +360,63 @@ static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
     vTaskDelay(pdMS_TO_TICKS(500));
 }
 
+#ifdef FEATURE_RADAR
+static void led_pattern_speed(led_strip_handle_t led_strip, int *step)
+{
+    (void)step;
+
+    RadarPayload snapshot = latest_radar_payload;
+
+    uint8_t max_speed = 0;
+    for (int i = 0; i < snapshot.count; i++)
+    {
+        if (snapshot.targets[i].speed > max_speed)
+        {
+            max_speed = snapshot.targets[i].speed;
+        }
+    }
+
+    if (snapshot.count == 0)
+    {
+        led_strip_refresh(led_strip);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        return;
+    }
+
+    if (max_speed > 99)
+    {
+        max_speed = 99;
+    }
+    int tens = max_speed / 10;
+    int ones = max_speed % 10;
+    bool show_tens = max_speed >= 10;
+
+    int num_rows = sizeof(font_num[0]) / sizeof(font_num[0][0]); // 32
+    int num_cols = LED_PANEL_COLS;                               // 16
+
+    for (int row = 0; row < num_rows; row++)
+    {
+        short tens_row = show_tens ? font_num[tens][row] : 0;
+        short ones_row = font_num[ones][row];
+
+        for (int col = 0; col < num_cols; col++)
+        {
+            if (tens_row & (1 << col))
+            {
+                led_strip_set_pixel(led_strip, led_index(row, col), 10, 0, 0);
+            }
+            if (ones_row & (1 << col))
+            {
+                led_strip_set_pixel(led_strip, led_index(row, col + num_cols), 10, 0, 0);
+            }
+        }
+    }
+
+    led_strip_refresh(led_strip);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+#endif
+
 void led_task(void *pvParameters)
 {
     led_strip_handle_t led_strip = (led_strip_handle_t)pvParameters;
@@ -416,6 +477,13 @@ void led_task(void *pvParameters)
             led_pattern_slow_down(led_strip, &step);
             break;
         }
+#ifdef FEATURE_RADAR
+        case DISPLAY_PATTERN_SPEED:
+        {
+            led_pattern_speed(led_strip, &step);
+            break;
+        }
+#endif
         }
     }
 }

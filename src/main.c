@@ -8,12 +8,18 @@
 #include "nvs_flash.h"
 #include "lwip/err.h"
 #include "lwip/sys.h"
-#include "esp_camera.h"
 
-#include "radar.h"
 #include "shared_lib.h"
 #include "pindefs.h"
 #include "led.h"
+
+#ifdef FEATURE_CAMERA
+#include "esp_camera.h"
+#endif
+
+#ifdef FEATURE_RADAR
+#include "radar.h"
+#endif
 
 #define MAX_STA_CONN 4
 
@@ -26,6 +32,87 @@ typedef enum
     WS_ENDPOINT_STREAM,
     WS_ENDPOINT_INPUT,
 } ws_endpoint;
+
+static void noop_free(void *ctx) { (void)ctx; }
+
+static esp_err_t ws_send(int fd, const void *data, size_t len)
+{
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .final = true,
+        .payload = (uint8_t *)data,
+        .len = len,
+    };
+    return httpd_ws_send_data(server, fd, &frame);
+}
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data)
+{
+    switch (event_id)
+    {
+    case WIFI_EVENT_AP_STACONNECTED:
+    {
+        wifi_event_ap_staconnected_t *connected_event = (wifi_event_ap_staconnected_t *)event_data;
+        ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(connected_event->mac), connected_event->aid);
+        break;
+    }
+
+    case WIFI_EVENT_AP_STADISCONNECTED:
+    {
+        wifi_event_ap_stadisconnected_t *disconnected_event = (wifi_event_ap_stadisconnected_t *)event_data;
+        ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(disconnected_event->mac), disconnected_event->aid);
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+static esp_err_t ws_input_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET)
+    {
+        ESP_LOGI(TAG, "Handshake done, ws_input connection opened");
+        httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_INPUT, noop_free);
+        return ESP_OK;
+    }
+
+    httpd_ws_frame_t frame = {
+        .type = HTTPD_WS_TYPE_BINARY,
+        .payload = NULL,
+    };
+
+    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ws_input: failed to get frame len: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    if (frame.len != sizeof(InputData))
+    {
+        ESP_LOGW(TAG, "ws_input: expected %d bytes, got %d", (int)sizeof(InputData), (int)frame.len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    InputData input;
+    frame.payload = (uint8_t *)&input;
+
+    ret = httpd_ws_recv_frame(req, &frame, frame.len);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ws_input: failed to recv frame: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    current_display_pattern = input.display_pattern;
+
+    return ESP_OK;
+}
+
+#ifdef FEATURE_CAMERA
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -82,130 +169,16 @@ esp_err_t init_camera(void)
     return ret;
 }
 
-void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                        int32_t event_id, void *event_data)
-{
-    switch (event_id)
-    {
-    case WIFI_EVENT_AP_STACONNECTED:
-    {
-        wifi_event_ap_staconnected_t *connected_event = (wifi_event_ap_staconnected_t *)event_data;
-        ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(connected_event->mac), connected_event->aid);
-        break;
-    }
-
-    case WIFI_EVENT_AP_STADISCONNECTED:
-    {
-        wifi_event_ap_stadisconnected_t *disconnected_event = (wifi_event_ap_stadisconnected_t *)event_data;
-        ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(disconnected_event->mac), disconnected_event->aid);
-        break;
-    }
-
-    default:
-        break;
-    }
-}
-
-esp_err_t ws_radar_data_handler(httpd_req_t *req)
-{
-    if (req->method == HTTP_GET)
-    {
-        ESP_LOGI(TAG, "Handshake done, radar data connection opened");
-        httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_DATA, NULL);
-        return ESP_OK;
-    }
-
-    return ESP_FAIL;
-}
-
 esp_err_t ws_image_stream_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET)
     {
         ESP_LOGI(TAG, "Handshake done, image stream connection opened");
-        httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_STREAM, NULL);
+        httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_STREAM, noop_free);
         return ESP_OK;
     }
 
     return ESP_FAIL;
-}
-
-esp_err_t ws_input_handler(httpd_req_t *req)
-{
-    if (req->method == HTTP_GET)
-    {
-        ESP_LOGI(TAG, "Handshake done, ws_input connection opened");
-        httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_INPUT, NULL);
-        return ESP_OK;
-    }
-
-    httpd_ws_frame_t frame = {
-        .type = HTTPD_WS_TYPE_BINARY,
-        .payload = NULL,
-    };
-
-    esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "ws_input: failed to get frame len: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    if (frame.len != sizeof(InputData))
-    {
-        ESP_LOGW(TAG, "ws_input: expected %d bytes, got %d", (int)sizeof(InputData), (int)frame.len);
-        return ESP_ERR_INVALID_SIZE;
-    }
-
-    InputData input;
-    frame.payload = (uint8_t *)&input;
-
-    ret = httpd_ws_recv_frame(req, &frame, frame.len);
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "ws_input: failed to recv frame: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    current_display_pattern = input.display_pattern;
-
-    return ESP_OK;
-}
-
-void websocket_test_data_task(void *pvParameters)
-{
-    while (true)
-    {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        RadarPayload snapshot = latest_radar_payload;
-
-        size_t clients = 10;
-        int fds[10];
-        if (httpd_get_client_list(server, &clients, fds) == ESP_OK)
-        {
-            for (int i = 0; i < clients; i++)
-            {
-                if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET &&
-                    (int)(intptr_t)httpd_sess_get_ctx(server, fds[i]) == WS_ENDPOINT_DATA)
-                {
-                    httpd_ws_frame_t frame = {
-                        .type = HTTPD_WS_TYPE_BINARY,
-                        .final = true,
-                        .payload = (uint8_t *)&snapshot,
-                        .len = sizeof(RadarPayload),
-                    };
-
-                    esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
-                    if (ret != ESP_OK)
-                    {
-                        ESP_LOGW(TAG, "Failed to send radar data to fd %d: %s", fds[i], esp_err_to_name(ret));
-                        httpd_sess_trigger_close(server, fds[i]);
-                    }
-                }
-            }
-        }
-    }
 }
 
 void image_stream_task(void *pvParameters)
@@ -222,25 +195,15 @@ void image_stream_task(void *pvParameters)
         size_t clients = 10;
         int fds[10];
         if (httpd_get_client_list(server, &clients, fds) == ESP_OK)
-
         {
             for (int i = 0; i < clients; i++)
             {
                 if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET &&
                     (int)(intptr_t)httpd_sess_get_ctx(server, fds[i]) == WS_ENDPOINT_STREAM)
                 {
-                    httpd_ws_frame_t frame = {
-                        .type = HTTPD_WS_TYPE_BINARY,
-                        .payload = fb->buf,
-                        .len = fb->len,
-                    };
-
-                    esp_err_t ret = httpd_ws_send_frame_async(server, fds[i], &frame);
+                    esp_err_t ret = ws_send(fds[i], fb->buf, fb->len);
                     if (ret != ESP_OK)
-                    {
                         ESP_LOGW(TAG, "Stream send failed fd %d: %s", fds[i], esp_err_to_name(ret));
-                        httpd_sess_trigger_close(server, fds[i]);
-                    }
                 }
             }
         }
@@ -251,7 +214,50 @@ void image_stream_task(void *pvParameters)
     }
 }
 
-void start_webserver(void)
+#endif // FEATURE_CAMERA
+
+#ifdef FEATURE_RADAR
+
+esp_err_t ws_radar_data_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET)
+    {
+        ESP_LOGI(TAG, "Handshake done, radar data connection opened");
+        httpd_sess_set_ctx(server, httpd_req_to_sockfd(req), (void *)WS_ENDPOINT_DATA, noop_free);
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
+}
+
+void radar_data_task(void *pvParameters)
+{
+    while (true)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        size_t clients = 10;
+        int fds[10];
+        if (httpd_get_client_list(server, &clients, fds) == ESP_OK)
+        {
+            for (int i = 0; i < clients; i++)
+            {
+                if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET &&
+                    (int)(intptr_t)httpd_sess_get_ctx(server, fds[i]) == WS_ENDPOINT_DATA)
+                {
+                    RadarPayload snapshot = latest_radar_payload;
+                    esp_err_t ret = ws_send(fds[i], &snapshot, sizeof(snapshot));
+                    if (ret != ESP_OK)
+                        ESP_LOGW(TAG, "Radar send failed fd %d: %s", fds[i], esp_err_to_name(ret));
+                }
+            }
+        }
+    }
+}
+
+#endif // FEATURE_RADAR
+
+static void start_webserver(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
@@ -264,6 +270,18 @@ void start_webserver(void)
         return;
     }
 
+#ifdef FEATURE_CAMERA
+    httpd_uri_t stream_uri = {
+        .uri = "/" IMAGE_STREAM_URI,
+        .method = HTTP_GET,
+        .handler = ws_image_stream_handler,
+        .is_websocket = true,
+    };
+    httpd_register_uri_handler(server, &stream_uri);
+    xTaskCreate(image_stream_task, "image_stream", 8192, NULL, 5, NULL);
+#endif
+
+#ifdef FEATURE_RADAR
     httpd_uri_t radar_data_uri = {
         .uri = "/" RADAR_DATA_URI,
         .method = HTTP_GET,
@@ -271,16 +289,8 @@ void start_webserver(void)
         .is_websocket = true,
     };
     httpd_register_uri_handler(server, &radar_data_uri);
-    xTaskCreate(websocket_test_data_task, "test_data_task", 4096, NULL, 5, NULL);
-
-    // httpd_uri_t stream_uri = {
-    //     .uri = "/" IMAGE_STREAM_URI,
-    //     .method = HTTP_GET,
-    //     .handler = ws_image_stream_handler,
-    //     .is_websocket = true,
-    // };
-    // httpd_register_uri_handler(server, &stream_uri);
-    // xTaskCreate(image_stream_task, "image_stream", 8192, NULL, 5, NULL);
+    xTaskCreate(radar_data_task, "radar_data_task", 4096, NULL, 5, NULL);
+#endif
 
     httpd_uri_t input_uri = {
         .uri = "/" WS_INPUT_URI,
@@ -291,7 +301,7 @@ void start_webserver(void)
     httpd_register_uri_handler(server, &input_uri);
 }
 
-void wifi_init_softap(void)
+static void wifi_init_softap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -338,15 +348,20 @@ void app_main(void)
 
     vTaskDelay(pdMS_TO_TICKS(3000));
 
-    // esp_err_t cam_ret = init_camera();
+#ifdef FEATURE_CAMERA
+    ESP_ERROR_CHECK(init_camera());
+#endif
+
     led_strip_handle_t led_strip = configure_led();
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_softap();
     start_webserver();
 
-    // ESP_ERROR_CHECK(cam_ret);
+#ifdef FEATURE_RADAR
     ESP_ERROR_CHECK(radar_init());
     xTaskCreate(radar_task, "radar_task", 4096, NULL, 5, NULL);
+#endif
+
     xTaskCreate(led_task, "led_task", 4096, (void *)led_strip, 5, NULL);
 }

@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/uart.h"
@@ -7,11 +9,14 @@
 #include "radar.h"
 
 #define RADAR_UART_NUM UART_NUM_1
-#define RADAR_BAUD_RATE 256000
+#define RADAR_BAUD_RATE 115200
 #define RADAR_BUF_SIZE 1024
 
-#define FRAME_START 0xC0
-#define FRAME_MAX_LEN 64
+// Data frame: F4 F3 F2 F1  [len_lo] [len_hi]  [payload × datalength]  F8 F7 F6 F5
+// Payload:    [alarm_info] [target_count] [target × N (5 bytes each)] [optional tail/check]
+static const uint8_t FRAME_HEADER[4] = {0xF4, 0xF3, 0xF2, 0xF1};
+static const uint8_t FRAME_FOOTER[4] = {0xF8, 0xF7, 0xF6, 0xF5};
+#define FRAME_MAX_PAYLOAD 64
 
 static const char *TAG = "radar";
 
@@ -49,72 +54,106 @@ esp_err_t radar_init(void)
     return ESP_OK;
 }
 
-/// Frame layout: [0xC0][frame_type][sub_type][payload_len] [data × (payload_len-1)] [xor_checksum]
-static bool read_frame(uint8_t *frame_type_out, uint8_t *sub_out, uint8_t *data, uint8_t *data_len_out)
+static bool sync_to_header(void)
 {
+    int state = 0;
     uint8_t byte;
 
-    while (true)
+    while (state < 4)
     {
-        int n = uart_read_bytes(RADAR_UART_NUM, &byte, 1, pdMS_TO_TICKS(200));
-        if (n <= 0)
+        if (uart_read_bytes(RADAR_UART_NUM, &byte, 1, pdMS_TO_TICKS(200)) != 1)
         {
             return false;
         }
-        if (byte == FRAME_START)
+
+        if (byte == FRAME_HEADER[state])
         {
-            break;
+            state++;
+        }
+        else if (byte == FRAME_HEADER[0])
+        {
+            state = 1;
+        }
+        else
+        {
+            state = 0;
         }
     }
-
-    uint8_t header[3];
-    if (uart_read_bytes(RADAR_UART_NUM, header, 3, pdMS_TO_TICKS(100)) < 3)
-    {
-        return false;
-    }
-
-    uint8_t frame_type = header[0];
-    uint8_t sub_type = header[1];
-    uint8_t payload_len = header[2]; // data bytes + 1 checksum byte
-
-    if (payload_len == 0 || payload_len > FRAME_MAX_LEN)
-    {
-        return false;
-    }
-
-    uint8_t payload[FRAME_MAX_LEN];
-    if (uart_read_bytes(RADAR_UART_NUM, payload, payload_len, pdMS_TO_TICKS(100)) < payload_len)
-    {
-        return false;
-    }
-
-    uint8_t xorval = FRAME_START ^ frame_type ^ sub_type ^ payload_len;
-    for (int i = 0; i < payload_len - 1; i++)
-    {
-        xorval ^= payload[i];
-    }
-
-    if (xorval != payload[payload_len - 1])
-    {
-        ESP_LOGW(TAG, "Checksum mismatch: expected 0x%02x got 0x%02x", xorval, payload[payload_len - 1]);
-        return false;
-    }
-
-    *frame_type_out = frame_type;
-    *sub_out = sub_type;
-    *data_len_out = payload_len - 1;
-    for (int i = 0; i < *data_len_out; i++)
-    {
-        data[i] = payload[i];
-    }
-
     return true;
 }
 
-static RadarPayload parse_targets(const uint8_t *data, uint8_t data_len)
+static int read_data_frame(uint8_t *payload, size_t max_len)
 {
-    RadarPayload payload = {0};
-    uint8_t count = data_len / sizeof(VehicleTarget);
+    if (!sync_to_header())
+    {
+        return -1;
+    }
+
+    uint8_t len_bytes[2];
+    if (uart_read_bytes(RADAR_UART_NUM, len_bytes, 2, pdMS_TO_TICKS(100)) < 2)
+    {
+        return -1;
+    }
+
+    uint16_t datalength = ((uint16_t)len_bytes[1] << 8) | len_bytes[0];
+    if (datalength > max_len)
+    {
+        ESP_LOGW(TAG, "Datalength %u exceeds buffer", datalength);
+        return -1;
+    }
+
+    if (datalength > 0 && uart_read_bytes(RADAR_UART_NUM, payload, datalength, pdMS_TO_TICKS(100)) < datalength)
+    {
+        return -1;
+    }
+
+    uint8_t footer[4];
+    if (uart_read_bytes(RADAR_UART_NUM, footer, 4, pdMS_TO_TICKS(100)) < 4)
+    {
+        return -1;
+    }
+    if (memcmp(footer, FRAME_FOOTER, 4) != 0)
+    {
+        ESP_LOGW(TAG, "Bad footer %02x %02x %02x %02x", footer[0], footer[1], footer[2], footer[3]);
+        return -1;
+    }
+
+    return (int)datalength;
+}
+
+static void log_payload(const RadarPayload *payload)
+{
+    if (payload->count == 0)
+    {
+        ESP_LOGI(TAG, "frame: no targets");
+        return;
+    }
+
+    ESP_LOGI(TAG, "frame: %u target(s)", payload->count);
+    for (int i = 0; i < payload->count; i++)
+    {
+        const VehicleTarget *t = &payload->targets[i];
+        ESP_LOGI(TAG, "  [%d] angle=%d dist=%um dir=%s speed=%ukm/h snr=%u",
+                 i, t->angle, t->distance,
+                 t->direction == 0 ? "away" : "toward",
+                 t->speed, t->snr);
+    }
+}
+
+static RadarPayload parse_targets(const uint8_t *payload, uint16_t datalength)
+{
+    RadarPayload result = {0};
+    if (datalength < 2)
+    {
+        return result;
+    }
+
+    uint8_t count = payload[1];
+    if (2 + count * sizeof(VehicleTarget) > datalength)
+    {
+        ESP_LOGW(TAG, "Target count %u inconsistent with datalength %u", count, datalength);
+        return result;
+    }
     if (count > MAX_RADAR_TARGETS)
     {
         count = MAX_RADAR_TARGETS;
@@ -122,52 +161,31 @@ static RadarPayload parse_targets(const uint8_t *data, uint8_t data_len)
 
     for (int i = 0; i < count; i++)
     {
-        const uint8_t *p = &data[i * sizeof(VehicleTarget)];
-        payload.targets[i].angle = (int8_t)(p[0] - 0x80);
-        payload.targets[i].distance = p[1];
-        payload.targets[i].direction = p[2];
-        payload.targets[i].speed = p[3];
-        payload.targets[i].snr = p[4];
+        const uint8_t *p = &payload[2 + i * sizeof(VehicleTarget)];
+        result.targets[i].angle = (int8_t)(p[0] - 0x80);
+        result.targets[i].distance = p[1];
+        result.targets[i].direction = p[2];
+        result.targets[i].speed = p[3];
+        result.targets[i].snr = p[4];
     }
-
-    payload.count = count;
-    return payload;
-}
-
-static void log_payload(const RadarPayload *payload)
-{
-    if (payload->count == 0)
-    {
-        ESP_LOGI(TAG, "No targets");
-        return;
-    }
-
-    for (int i = 0; i < payload->count; i++)
-    {
-        const VehicleTarget *t = &payload->targets[i];
-        ESP_LOGI(TAG, "Target %d: angle=%d° dist=%dm dir=%s speed=%dkm/h snr=%d",
-                 i,
-                 t->angle,
-                 t->distance,
-                 t->direction == 0 ? "away" : "towards",
-                 t->speed,
-                 t->snr);
-    }
+    result.count = count;
+    return result;
 }
 
 void radar_task(void *pvParameters)
 {
-    uint8_t frame_type, sub_type, data[FRAME_MAX_LEN], data_len;
+    uint8_t payload[FRAME_MAX_PAYLOAD];
 
     while (true)
     {
-        if (!read_frame(&frame_type, &sub_type, data, &data_len))
+        int datalength = read_data_frame(payload, sizeof(payload));
+        if (datalength < 0)
         {
             continue;
         }
 
-        RadarPayload payload = parse_targets(data, data_len);
-        log_payload(&payload);
-        latest_radar_payload = payload;
+        RadarPayload parsed = parse_targets(payload, (uint16_t)datalength);
+        log_payload(&parsed);
+        latest_radar_payload = parsed;
     }
 }
