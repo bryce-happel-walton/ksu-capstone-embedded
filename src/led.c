@@ -19,7 +19,7 @@ volatile DisplayPattern current_display_pattern = DISPLAY_PATTERN_SPEED;
 volatile DisplayPattern current_display_pattern = DISPLAY_PATTERN_SLOW_DOWN;
 #endif
 
-volatile int speed_threshold_kph = 4; // kph
+volatile int speed_threshold_kph = 40; // kph
 volatile SpeedUnit current_display_speed_unit = MPH;
 
 const float KPH_TO_MPH = 0.6213712;
