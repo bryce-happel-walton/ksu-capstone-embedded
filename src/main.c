@@ -108,6 +108,8 @@ static esp_err_t ws_input_handler(httpd_req_t *req)
     }
 
     current_display_pattern = input.display_pattern;
+    speed_threshold_kph = input.speed_threshold_kph;
+    current_display_speed_unit = input.display_speed_unit;
 
     return ESP_OK;
 }

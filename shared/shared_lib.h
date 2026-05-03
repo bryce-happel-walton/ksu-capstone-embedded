@@ -31,18 +31,19 @@ typedef enum
     DISPLAY_PATTERN_FONT_NUM_SEGMENT_TEST,
     DISPLAY_PATTERN_SLOW_DOWN,
     DISPLAY_PATTERN_SPEED,
-} TestDisplayPattern;
+} DisplayPattern;
+
+typedef enum
+{
+    MPH,
+    KPH,
+} SpeedUnit;
 
 typedef struct __attribute__((packed))
 {
-    char hello[32];
-    uint32_t beep;
-    bool boop;
-} TestData;
-
-typedef struct __attribute__((packed))
-{
-    TestDisplayPattern display_pattern;
+    DisplayPattern display_pattern;
+    SpeedUnit display_speed_unit;
+    int speed_threshold_kph;
 } InputData;
 
 typedef struct __attribute__((packed))

@@ -13,7 +13,16 @@
 #include "radar.h"
 #endif
 
-volatile TestDisplayPattern current_display_pattern = DISPLAY_PATTERN_SLOW_DOWN;
+#ifdef FEATURE_RADAR
+volatile DisplayPattern current_display_pattern = DISPLAY_PATTERN_SPEED;
+#else
+volatile DisplayPattern current_display_pattern = DISPLAY_PATTERN_SLOW_DOWN;
+#endif
+
+volatile int speed_threshold_kph = 4; // kph
+volatile SpeedUnit current_display_speed_unit = MPH;
+
+const float KPH_TO_MPH = 0.6213712;
 
 led_strip_handle_t configure_led(void)
 {
@@ -328,7 +337,7 @@ static void led_pattern_number_font_test(led_strip_handle_t led_strip, int *step
     vTaskDelay(pdMS_TO_TICKS(500));
 }
 
-static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
+static void draw_slow_down(led_strip_handle_t led_strip)
 {
     const char *line1 = "SLOW";
     const char *line2 = "DOWN";
@@ -355,7 +364,11 @@ static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
             }
         }
     }
+}
 
+static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
+{
+    draw_slow_down(led_strip);
     led_strip_refresh(led_strip);
     vTaskDelay(pdMS_TO_TICKS(500));
 }
@@ -363,8 +376,6 @@ static void led_pattern_slow_down(led_strip_handle_t led_strip, int *step)
 #ifdef FEATURE_RADAR
 static void led_pattern_speed(led_strip_handle_t led_strip, int *step)
 {
-    (void)step;
-
     RadarPayload snapshot = latest_radar_payload;
 
     uint8_t max_speed = 0;
@@ -378,8 +389,19 @@ static void led_pattern_speed(led_strip_handle_t led_strip, int *step)
 
     if (snapshot.count == 0)
     {
+        *step = 0;
         led_strip_refresh(led_strip);
         vTaskDelay(pdMS_TO_TICKS(100));
+        return;
+    }
+
+    bool over_threshold = max_speed > speed_threshold_kph;
+    if (over_threshold && (*step % 2 == 1))
+    {
+        draw_slow_down(led_strip);
+        led_strip_refresh(led_strip);
+        *step = (*step + 1) % 2;
+        vTaskDelay(pdMS_TO_TICKS(500));
         return;
     }
 
@@ -387,9 +409,10 @@ static void led_pattern_speed(led_strip_handle_t led_strip, int *step)
     {
         max_speed = 99;
     }
-    int tens = max_speed / 10;
-    int ones = max_speed % 10;
-    bool show_tens = max_speed >= 10;
+    int converted_speed = (current_display_speed_unit == MPH) ? (int)((float)max_speed * KPH_TO_MPH) : max_speed;
+    int tens = converted_speed / 10;
+    int ones = converted_speed % 10;
+    bool show_tens = converted_speed >= 10;
 
     int num_rows = sizeof(font_num[0]) / sizeof(font_num[0][0]); // 32
     int num_cols = LED_PANEL_COLS;                               // 16
@@ -403,17 +426,18 @@ static void led_pattern_speed(led_strip_handle_t led_strip, int *step)
         {
             if (tens_row & (1 << col))
             {
-                led_strip_set_pixel(led_strip, led_index(row, col), 10, 0, 0);
+                led_strip_set_pixel(led_strip, led_index(row, col), 50, 10, 0);
             }
             if (ones_row & (1 << col))
             {
-                led_strip_set_pixel(led_strip, led_index(row, col + num_cols), 10, 0, 0);
+                led_strip_set_pixel(led_strip, led_index(row, col + num_cols), 50, 10, 0);
             }
         }
     }
 
     led_strip_refresh(led_strip);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    *step = (*step + 1) % 2;
+    vTaskDelay(pdMS_TO_TICKS(over_threshold ? 500 : 100));
 }
 #endif
 
@@ -422,7 +446,7 @@ void led_task(void *pvParameters)
     led_strip_handle_t led_strip = (led_strip_handle_t)pvParameters;
 
     int step = 0;
-    TestDisplayPattern last_pattern = current_display_pattern;
+    DisplayPattern last_pattern = current_display_pattern;
 
     while (true)
     {
